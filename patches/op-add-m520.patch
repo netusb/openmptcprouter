@@ -1,0 +1,602 @@
+diff -uNr openwrt/include/image-commands.mk openwrt-m520/include/image-commands.mk
+--- openwrt/include/image-commands.mk	2021-01-30 01:51:34.044214690 +0800
++++ openwrt-m520/include/image-commands.mk	2021-01-30 01:48:23.421604558 +0800
+@@ -311,6 +311,13 @@
+ 	fi
+ endef
+ 
++define Build/qsdk-ipq-factory-mmc
++	$(TOPDIR)/scripts/mkits-qsdk-ipq-image.sh \
++		$@.its kernel $(IMAGE_KERNEL) rootfs $(IMAGE_ROOTFS)
++	PATH=$(LINUX_DIR)/scripts/dtc:$(PATH) mkimage -f $@.its $@.new
++	@mv $@.new $@
++endef
++
+ define Build/qsdk-ipq-factory-nand
+ 	$(TOPDIR)/scripts/mkits-qsdk-ipq-image.sh \
+ 		$@.its ubi $@
+diff -uNr openwrt/target/linux/ipq806x/base-files/etc/board.d/02_network openwrt-m520/target/linux/ipq806x/base-files/etc/board.d/02_network
+--- openwrt/target/linux/ipq806x/base-files/etc/board.d/02_network	2021-01-30 01:51:35.636236490 +0800
++++ openwrt-m520/target/linux/ipq806x/base-files/etc/board.d/02_network	2021-01-29 02:27:47.950510806 +0800
+@@ -69,6 +69,13 @@
+ ubnt,unifi-ac-hd)
+ 	ucidef_set_interface_lan "eth0 eth1"
+ 	;;
++ruijie,rg-mtfi-m520)
++	hw_mac_addr=$(mtd_get_mac_ascii PRODUCTINFO ethaddr)
++	ucidef_add_switch "switch0" \
++		"1:lan" "6@eth1" "5:wan" "0@eth0"
++	ucidef_set_interface_macaddr "wan" "$hw_mac_addr"
++	ucidef_set_interface_macaddr "lan" "$(macaddr_add $hw_mac_addr 1)"
++	;;
+ zyxel,nbg6817)
+ 	hw_mac_addr=$(mtd_get_mac_ascii 0:APPSBLENV ethaddr)
+ 	ucidef_add_switch "switch0" \
+diff -uNr openwrt/target/linux/ipq806x/base-files/etc/hotplug.d/firmware/11-ath10k-caldata openwrt-m520/target/linux/ipq806x/base-files/etc/hotplug.d/firmware/11-ath10k-caldata
+--- openwrt/target/linux/ipq806x/base-files/etc/hotplug.d/firmware/11-ath10k-caldata	2021-01-30 01:51:35.636236490 +0800
++++ openwrt-m520/target/linux/ipq806x/base-files/etc/hotplug.d/firmware/11-ath10k-caldata	2021-01-29 02:28:53.991197549 +0800
+@@ -7,6 +7,22 @@
+ board=$(board_name)
+ 
+ case "$FIRMWARE" in
++"ath10k/cal-pci-0000:01:00.0.bin")
++	case "$board" in
++	ruijie,rg-mtfi-m520)
++		caldata_extract "ART" 0x1000 0x844
++		ath10k_patch_mac $(macaddr_add $(mtd_get_mac_ascii PRODUCTINFO ethaddr) +2)
++		;;
++	esac
++	;;
++"ath10k/cal-pci-0001:01:00.0.bin")
++	case "$board" in
++	ruijie,rg-mtfi-m520)
++		caldata_extract "ART" 0x5000 0x844
++		ath10k_patch_mac $(macaddr_add $(mtd_get_mac_ascii PRODUCTINFO ethaddr) +3)
++		;;
++	esac
++	;;
+ "ath10k/pre-cal-pci-0000:01:00.0.bin")
+ 	case $board in
+ 	asrock,g10)
+diff -uNr openwrt/target/linux/ipq806x/base-files/lib/preinit/05_set_iface_mac_ipq806x.sh openwrt-m520/target/linux/ipq806x/base-files/lib/preinit/05_set_iface_mac_ipq806x.sh
+--- openwrt/target/linux/ipq806x/base-files/lib/preinit/05_set_iface_mac_ipq806x.sh	2021-01-30 01:51:35.636236490 +0800
++++ openwrt-m520/target/linux/ipq806x/base-files/lib/preinit/05_set_iface_mac_ipq806x.sh	2021-01-29 02:31:08.708584141 +0800
+@@ -1,12 +1,13 @@
++#!/bin/sh
++
+ . /lib/functions.sh
+ 
+ preinit_set_mac_address() {
+ 	case $(board_name) in
+-	asrock,g10)
+-		lan_mac=$(mtd_get_mac_ascii hwconfig HW.LAN.MAC.Address)
+-		wan_mac=$(mtd_get_mac_ascii hwconfig HW.WAN.MAC.Address)
+-		ip link set dev eth0 address "${lan_mac}"
+-		ip link set dev eth1 address "${wan_mac}"
++	ruijie,rg-mtfi-m520)
++		base_mac=$(mtd_get_mac_ascii PRODUCTINFO ethaddr)
++		ip link set dev eth0 address $(macaddr_add "$base_mac" +1)
++		ip link set dev eth1 address $(macaddr_add "$base_mac" +2)
+ 		;;
+ 	esac
+ }
+diff -uNr openwrt/target/linux/ipq806x/base-files/lib/upgrade/platform.sh openwrt-m520/target/linux/ipq806x/base-files/lib/upgrade/platform.sh
+--- openwrt/target/linux/ipq806x/base-files/lib/upgrade/platform.sh	2021-01-30 01:51:35.640236544 +0800
++++ openwrt-m520/target/linux/ipq806x/base-files/lib/upgrade/platform.sh	2021-01-29 02:31:55.449061404 +0800
+@@ -43,6 +43,9 @@
+ 	linksys,ea8500)
+ 		platform_do_upgrade_linksys "$1"
+ 		;;
++	ruijie,rg-mtfi-m520)
++		ruijie_do_upgrade "$1"
++		;;
+ 	tplink,ad7200 |\
+ 	tplink,c2600)
+ 		PART_NAME="os-image:rootfs"
+diff -uNr openwrt/target/linux/ipq806x/base-files/lib/upgrade/ruijie.sh openwrt-m520/target/linux/ipq806x/base-files/lib/upgrade/ruijie.sh
+--- openwrt/target/linux/ipq806x/base-files/lib/upgrade/ruijie.sh	1970-01-01 08:00:00.000000000 +0800
++++ openwrt-m520/target/linux/ipq806x/base-files/lib/upgrade/ruijie.sh	2021-01-29 02:32:59.357711265 +0800
+@@ -0,0 +1,54 @@
++#
++# Copyright (C) 2016 lede-project.org
++#
++
++ruijie_do_flash() {
++	local tar_file=$1
++	local kernel=$2
++	local rootfs=$3
++
++	# keep sure its unbound
++	losetup --detach-all || {
++		echo Failed to detach all loop devices. Skip this try.
++		reboot -f
++	}
++
++	# use the first found directory in the tar archive
++	local board_dir=$(tar tf $tar_file | grep -m 1 '^sysupgrade-.*/$')
++	board_dir=${board_dir%/}
++
++	echo "flashing kernel to $kernel"
++	tar xf $tar_file ${board_dir}/kernel -O > $kernel
++
++	echo "flashing rootfs to $rootfs"
++	tar xf $tar_file ${board_dir}/root -O > $rootfs
++
++	# Cleanup
++	losetup -d /dev/loop0 >/dev/null 2>&1
++	sync
++	umount -a
++	reboot -f
++}
++
++ruijie_do_upgrade() {
++	local tar_file="$1"
++	local board=$(board_name)
++	local kernel=
++	local rootfs=
++
++	case "$board" in
++	ruijie,rg-mtfi-m520)
++		kernel="/dev/mmcblk0p2"
++		rootfs="/dev/mmcblk0p3"
++		;;
++	*)
++		return 1
++		;;
++	esac
++
++	ruijie_do_flash $tar_file $kernel $rootfs
++
++	nand_do_upgrade "$1"
++
++	return 0
++}
+\ 文件尾没有换行符
+diff -uNr openwrt/target/linux/ipq806x/files/arch/arm/boot/dts/qcom-ipq8064-rg-mtfi-m520.dts openwrt-m520/target/linux/ipq806x/files/arch/arm/boot/dts/qcom-ipq8064-rg-mtfi-m520.dts
+--- openwrt/target/linux/ipq806x/files/arch/arm/boot/dts/qcom-ipq8064-rg-mtfi-m520.dts	1970-01-01 08:00:00.000000000 +0800
++++ openwrt-m520/target/linux/ipq806x/files/arch/arm/boot/dts/qcom-ipq8064-rg-mtfi-m520.dts	2021-01-29 02:36:25.583790855 +0800
+@@ -0,0 +1,382 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++
++#include "qcom-ipq8064-v2.0.dtsi"
++
++#include <dt-bindings/input/input.h>
++
++/ {
++	model = "Ruijie RG-MTFi-M520";
++	compatible = "ruijie,rg-mtfi-m520", "qcom,ipq8064";
++
++	memory@0 {
++		reg = <0x42000000 0x7e000000>;
++		device_type = "memory";
++	};
++
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++		rsvd@41200000 {
++			reg = <0x41200000 0x300000>;
++			no-map;
++		};
++	};
++
++	aliases {
++		serial0 = &gsbi4_serial;
++		mdio-gpio0 = &mdio0;
++		sdcc1 = &sdcc1;
++	};
++
++	chosen {
++		bootargs = "root=/dev/mmcblk0p3 rootfstype=squashfs,ext4 rootwait noinitrd";
++		stdout-path = "serial0:115200n8";
++	};
++
++	cpus {
++		idle-states {
++			CPU_SPC: spc {
++				status = "disabled";
++			};
++		};
++	};
++
++	keys {
++		compatible = "gpio-keys";
++		pinctrl-0 = <&button_pins>;
++		pinctrl-names = "default";
++
++		reset {
++			label = "reset";
++			gpios = <&qcom_pinmux 54 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_RESTART>;
++		};
++	};
++};
++
++&qcom_pinmux {
++	button_pins: button_pins {
++		mux {
++			pins = "gpio54";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++
++	i2c4_pins: i2c4_pinmux {
++		mux {
++			pins = "gpio12", "gpio13";
++			function = "gsbi4";
++			drive-strength = <12>;
++			bias-disable;
++		};
++	};
++
++	led_pins: led_pins {
++		mux {
++			pins = "gpio7", "gpio8", "gpio9", "gpio53";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++	};
++
++	mdio0_pins: mdio0_pins {
++		mux {
++			pins = "gpio0", "gpio1";
++			function = "mdio";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		clk {
++			pins = "gpio1";
++			input-disable;
++		};
++	};
++
++	rgmii2_pins: rgmii2_pins {
++		mux {
++			pins =	"gpio27", "gpio28", "gpio29", "gpio30", "gpio31", "gpio32",
++				"gpio51", "gpio52", "gpio59", "gpio60", "gpio61", "gpio62";
++			function = "rgmii2";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		tx {
++			pins = "gpio27", "gpio28", "gpio29", "gpio30", "gpio31", "gpio32";
++			input-disable;
++		};
++	};
++
++	sdcc1_pins: sdcc1_pinmux {
++		mux {
++			pins =	"gpio38", "gpio39", "gpio40", "gpio41", "gpio42",
++				"gpio43", "gpio44", "gpio45", "gpio46", "gpio47";
++			function = "sdc1";
++		};
++
++		cmd {
++			pins = "gpio45";
++			drive-strength = <10>;
++			bias-pull-up;
++		};
++
++		data {
++			pins =	"gpio38", "gpio39", "gpio40", "gpio41",
++				"gpio43", "gpio44", "gpio46", "gpio47";
++			drive-strength = <10>;
++			bias-pull-up;
++		};
++
++		clk {
++			pins = "gpio42";
++			drive-strength = <16>;
++			bias-disable;
++		};
++	};
++
++	spi_pins: spi_pins {
++		mux {
++			pins = "gpio18", "gpio19", "gpio21";
++			function = "gsbi5";
++			drive-strength = <10>;
++			bias-none;
++		};
++
++		cs {
++			pins = "gpio20";
++			drive-strength = <12>;
++		};
++	};
++};
++
++&gsbi2 {
++	qcom,mode = <GSBI_PROT_I2C_UART>;
++	status = "okay";
++
++	i2c@124a0000 {
++		status = "okay";
++
++		lm75@48 {
++			status = "okay";
++			compatible = "lm75";
++			reg = <0x48>;
++		};
++
++		pcf8563: rtc@51 {
++			status = "okay";
++			compatible = "nxp,pcf8563";
++			reg = <0x51>;
++		};
++
++		tca9539@74 {
++			status = "okay";
++			compatible = "ti,tca9539";
++			reg = <0x74>;
++		};
++	};
++};
++
++&gsbi4 {
++	qcom,mode = <GSBI_PROT_I2C_UART>;
++	status = "okay";
++	serial@16340000 {
++		status = "okay";
++	};
++	/*
++	 * The i2c device on gsbi4 should not be enabled.
++	 * On ipq806x designs gsbi4 i2c is meant for exclusive
++	 * RPM usage. Turning this on in kernel manifests as
++	 * i2c failure for the RPM.
++	 */
++};
++
++&gsbi5 {
++	qcom,mode = <GSBI_PROT_SPI>;
++	status = "okay";
++
++	spi4: spi@1a280000 {
++		status = "okay";
++
++		pinctrl-0 = <&spi_pins>;
++		pinctrl-names = "default";
++
++		cs-gpios = <&qcom_pinmux 20 GPIO_ACTIVE_HIGH>;
++
++		m25p80@0 {
++			compatible = "s25fl256s1";
++			#address-cells = <1>;
++			#size-cells = <1>;
++			spi-max-frequency = <50000000>;
++			reg = <0>;
++
++			SBL1@0 {
++				label = "SBL1";
++				reg = <0x0 0x10000>;
++				read-only;
++			};
++
++			MIBIB@10000 {
++				label = "MIBIB";
++				reg = <0x10000 0x10000>;
++				read-only;
++			};
++
++			SBL2@20000 {
++				label = "SBL2";
++				reg = <0x20000 0x20000>;
++				read-only;
++			};
++
++			SBL3@40000 {
++				label = "SBL3";
++				reg = <0x40000 0x30000>;
++				read-only;
++			};
++
++			DDRCONFIG@70000 {
++				label = "DDRCONFIG";
++				reg = <0x70000 0x10000>;
++				read-only;
++			};
++
++			PRODUCTINFO@80000 {
++				label = "PRODUCTINFO";
++				reg = <0x80000 0x10000>;
++				read-only;
++			};
++
++			TZ@90000 {
++				label = "TZ";
++				reg = <0x90000 0x30000>;
++				read-only;
++			};
++
++			RPM@c0000 {
++				label = "RPM";
++				reg = <0xc0000 0x20000>;
++				read-only;
++			};
++
++			APPSBL@e0000 {
++				label = "APPSBL";
++				reg = <0xe0000 0x80000>;
++				read-only;
++			};
++
++			APPSBLENV@160000 {
++				label = "APPSBLENV";
++				reg = <0x160000 0x10000>;
++				read-only;
++			};
++
++			BOOTCONFIG@170000 {
++				label = "BOOTCONFIG";
++				reg = <0x170000 0x10000>;
++				read-only;
++			};
++
++			ART@180000 {
++				label = "ART";
++				reg = <0x180000 0x40000>;
++				read-only;
++			};
++		};
++	};
++};
++
++&sata_phy {
++	status = "okay";
++};
++
++&sata {
++	ports-implemented = <0x1>;
++	status = "okay";
++};
++
++&usb3_0 {
++	status = "okay";
++};
++
++&usb3_1 {
++	status = "okay";
++};
++
++&pcie0 {
++	status = "okay";
++
++	reset-gpio = <&qcom_pinmux 3 GPIO_ACTIVE_HIGH>;
++	/delete-property/ perst-gpios;
++};
++
++&pcie1 {
++	status = "okay";
++
++	reset-gpio = <&qcom_pinmux 48 GPIO_ACTIVE_HIGH>;
++	/delete-property/ perst-gpios;
++};
++
++&mdio0 {
++	status = "okay";
++
++	pinctrl-0 = <&mdio0_pins>;
++	pinctrl-names = "default";
++
++	phy0: ethernet-phy@0 {
++		reg = <0>;
++		qca,ar8327-initvals = <
++			0x00004 0x7600000   /* PAD0_MODE */
++			0x00008 0x1000000   /* PAD5_MODE */
++			0x0000c 0x80        /* PAD6_MODE */
++			0x000e4 0x6a545     /* MAC_POWER_SEL */
++			0x000e0 0xc74164de  /* SGMII_CTRL */
++			0x0007c 0x4e        /* PORT0_STATUS */
++			0x00094 0x4e        /* PORT6_STATUS */
++			>;
++	};
++
++	phy4: ethernet-phy@4 {
++		reg = <4>;
++	};
++};
++
++&gmac1 {
++	status = "okay";
++	phy-mode = "rgmii";
++	qcom,id = <1>;
++
++	pinctrl-0 = <&rgmii2_pins>;
++	pinctrl-names = "default";
++
++	fixed-link {
++		speed = <1000>;
++		full-duplex;
++	};
++};
++
++&gmac2 {
++	status = "okay";
++	phy-mode = "sgmii";
++	qcom,id = <2>;
++
++	fixed-link {
++		speed = <1000>;
++		full-duplex;
++	};
++};
++
++&amba {
++	sdcc1: sdcc@12400000 {
++		status = "okay";
++		pinctrl-0 = <&sdcc1_pins>;
++		pinctrl-names = "default";
++	};
++};
++
++&adm_dma {
++	status = "okay";
++};
+diff -uNr openwrt/target/linux/ipq806x/image/Makefile openwrt-m520/target/linux/ipq806x/image/Makefile
+--- openwrt/target/linux/ipq806x/image/Makefile	2021-01-30 01:51:35.652236709 +0800
++++ openwrt-m520/target/linux/ipq806x/image/Makefile	2021-01-29 02:39:01.297347630 +0800
+@@ -332,6 +332,26 @@
+ endef
+ TARGET_DEVICES += qcom_ipq8064-db149
+ 
++define Device/ruijie_rg-mtfi-m520
++	DEVICE_VENDOR := Ruijie
++	DEVICE_MODEL := RG-MTFi-M520
++	SOC := qcom-ipq8064
++	KERNEL_SIZE := 4096k
++	BLOCKSIZE := 64k
++	BOARD_NAME := rg-mtfi-m520
++	KERNEL_SUFFIX := -uImage
++	KERNEL = kernel-bin | append-dtb | uImage none | pad-to $${KERNEL_SIZE}
++	KERNEL_NAME := zImage
++	IMAGES := factory.bin sysupgrade.bin mmcblk0p2-kernel.bin mmcblk0p3-rootfs.bin
++	IMAGE/factory.bin := qsdk-ipq-factory-mmc
++	IMAGE/sysupgrade.bin/squashfs := append-rootfs | pad-to $$$${BLOCKSIZE} | sysupgrade-tar rootfs=$$$$@ | append-metadata
++	IMAGE/mmcblk0p2-kernel.bin := append-kernel | pad-to $$$${KERNEL_SIZE}
++	IMAGE/mmcblk0p3-rootfs.bin := append-rootfs | pad-rootfs
++	DEVICE_PACKAGES := ath10k-firmware-qca988x-ct e2fsprogs f2fs-tools \
++	kmod-gpio-pca953x kmod-hwmon-lm75 kmod-fs-ext4 kmod-fs-f2fs kmod-rtc-pcf8563 losetup
++endef
++TARGET_DEVICES += ruijie_rg-mtfi-m520
++
+ define Device/tplink_ad7200
+ 	$(call Device/TpSafeImage)
+ 	DEVICE_VENDOR := TP-Link
+diff -uNr openwrt/target/linux/ipq806x/Makefile openwrt-m520/target/linux/ipq806x/Makefile
+--- openwrt/target/linux/ipq806x/Makefile	2021-01-30 01:51:35.636236490 +0800
++++ openwrt-m520/target/linux/ipq806x/Makefile	2021-01-29 02:26:58.865996876 +0800
+@@ -20,7 +20,7 @@
+ 	kmod-ata-ahci kmod-ata-ahci-platform \
+ 	kmod-usb-ohci kmod-usb2 kmod-usb-ledtrig-usbport \
+ 	kmod-phy-qcom-ipq806x-usb kmod-usb3 kmod-usb-dwc3-qcom \
+-	kmod-ath10k-ct wpad-basic-wolfssl \
++	kmod-ath10k-ct wpad-openssl \
+ 	uboot-envtools
+ 
+ $(eval $(call BuildTarget))
+diff -uNr openwrt/target/linux/ipq806x/patches-5.4/0069-arm-boot-add-dts-files.patch openwrt-m520/target/linux/ipq806x/patches-5.4/0069-arm-boot-add-dts-files.patch
+--- openwrt/target/linux/ipq806x/patches-5.4/0069-arm-boot-add-dts-files.patch	2021-01-30 01:51:35.664236873 +0800
++++ openwrt-m520/target/linux/ipq806x/patches-5.4/0069-arm-boot-add-dts-files.patch	2021-01-29 02:40:00.289935149 +0800
+@@ -10,7 +10,7 @@
+ 
+ --- a/arch/arm/boot/dts/Makefile
+ +++ b/arch/arm/boot/dts/Makefile
+-@@ -842,7 +842,24 @@ dtb-$(CONFIG_ARCH_QCOM) += \
++@@ -842,7 +842,25 @@ dtb-$(CONFIG_ARCH_QCOM) += \
+  	qcom-ipq4019-ap.dk04.1-c3.dtb \
+  	qcom-ipq4019-ap.dk07.1-c1.dtb \
+  	qcom-ipq4019-ap.dk07.1-c2.dtb \
+@@ -25,6 +25,7 @@
+ +	qcom-ipq8064-g10.dtb \
+ +	qcom-ipq8064-r7500.dtb \
+ +	qcom-ipq8064-r7500v2.dtb \
+++	qcom-ipq8064-rg-mtfi-m520.dtb \
+ +	qcom-ipq8064-unifi-ac-hd.dtb \
+ +	qcom-ipq8064-wg2600hp.dtb \
+ +	qcom-ipq8064-wpq864.dtb \
