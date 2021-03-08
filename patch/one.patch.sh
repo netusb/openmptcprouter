@@ -17,3 +17,5 @@ cp -r /home/runner/openmptcprouter/patch/target-linux-ipq806x-image/Makefile  /h
 cp -r /home/runner/openmptcprouter/patch/Makefile /home/runner/openmptcprouter/arm_cortex-a15_neon-vfpv4/source/target/linux/ipq806x/Makefile
 
 cp -r /home/runner/openmptcprouter/patch/0069-arm-boot-add-dts-files.patch /home/runner/openmptcprouter/arm_cortex-a15_neon-vfpv4/source/target/linux/ipq806x/patches-5.4/0069-arm-boot-add-dts-files.patch
+
+cp -r /home/runner/openmptcprouter/patch/config-omr-m520 /home/runner/openmptcprouter/arm_cortex-a15_neon-vfpv4/.config
